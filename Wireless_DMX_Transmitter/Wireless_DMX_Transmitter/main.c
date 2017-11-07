@@ -57,6 +57,7 @@ do                          \
 #define   PIN_BLUE  PORTB2
 
 #define   RAWDATASIZE 126
+#define   NUMBER_OF_PACKAGES_TO_SEND 2  // = 64 channels transmission
 
 /*------------------------ Global Variables  ---------------------------------*/
 uint8_t Package_Data[32];
@@ -87,8 +88,9 @@ int main(void)
   int nData_compare = 0;
   char Best_Channel;
   
+  //TODO
   // Get the Adress from DIP's
-  tx_address[4] = (PIND&0b11110000)>>4; 
+  //tx_address[4] = (PIND&0b11110000)>>4; 
   
   // Clear the Channel Array
   for (Counter=0; Counter<513; Counter++) 
@@ -113,70 +115,99 @@ int main(void)
   
   while(1)
   {
+    //HACK
     // If the Transmitt Adress should be changed, the Device should do a Soft reset
-    if (tx_address[4] != ((PIND&0b11110000)>>4)){
-      soft_reset();
-    }
+    //if (tx_address[4] != ((PIND&0b11110000)>>4)){
+      //soft_reset();
+    //}
     
-    // Split Data in 31 Byte Packages
-    for (PackageCounter = 0; PackageCounter < 17; PackageCounter++)
+    // every package (contains 30 channels)
+    for (PackageCounter = 0; PackageCounter < NUMBER_OF_PACKAGES_TO_SEND; PackageCounter++)
     {
-      nData_compare = 0;                //Reset data compare
+      
       Package_Data[0] = PackageCounter;   //Write Packet-Nr
-              
-      for (Counter = 1; Counter < 32; Counter++) //Write packet-Data
-      {
-        if ((PackageCounter*31+Counter) < 512)
+      nData_compare = 0;                //Reset data compare
+          
+      // every channel of the package    
+      for (Counter = 1; Counter < 31; Counter++) //Write packet-Data
+      {  
+        /* check, if channel < 512 (protect array DMX Data out of bounds) */
+        if ((PackageCounter*30+Counter) < 512)
         {
-          Package_Data[Counter] = DMX_Data[PackageCounter*31+Counter-1];
-          nData_compare += Package_Data[Counter];
+          Package_Data[Counter] = DMX_Data[PackageCounter*30+Counter-1];
+          nData_compare += 0x01 & Package_Data[Counter];
         }
       }
       
+      Package_Data[31] = nData_compare;
+      
+      
+      if(sendNrfPackage(Package_Data) == 0)
+      {
+        StatusLED = 0;
+        SetLED(0,1,0);
+      }
+      else if (StatusLED < 25)      // if more than 25 bad status were recognized
+      {
+        SetLED(1,1,0);
+        StatusLED++ ;
+      }
+      else
+      {
+         SetLED(1,0,0);
+      }
       //Send only If Data has been changed. (Receiver will listen to these Packages 
       //                                     Package 0 and 8 will be sent every time.)
-      if (data_compare[PackageCounter] != nData_compare  || PackageCounter == 0 || PackageCounter == 8  )
-      {      
-        nrf24_send(Package_Data); //Send Packet
-        
-        /* Wait for transmission to end */
-        while(nrf24_isSending()); // Wait for the last transmission to end
-   
-        if (nrf24_lastMessageStatus() == NRF24_TRANSMISSON_OK)
-        {
-            StatusLED = 0;
-            SetLED(0,1,0);
-        } else if (StatusLED < 25)      // if more than 25 bad status were recognized
-        {
-            SetLED(1,1,0);
-            StatusLED++ ;
-        } else {
-          SetLED(1,0,0);
-        }  
+      //if (data_compare[PackageCounter] != nData_compare  || PackageCounter == 0 || PackageCounter == 8  )
       }
-      data_compare[PackageCounter] = nData_compare; //Set new Compare data
-    }
   }
 }
 
 
-  void SetLED(char Red, char Green, char Blue) {
-    if (Red) {
-      SETBIT(PORTB,PIN_RED);
-      } else {
-      CLEARBIT(PORTB,PIN_RED);
-    }
-    if (Green) {
-      SETBIT(PORTB,PIN_GREEN);
-      } else {
-      CLEARBIT(PORTB,PIN_GREEN);
-    }
-    if (Blue) {
-      SETBIT(PORTB,PIN_BLUE);
-      } else {
-      CLEARBIT(PORTB,PIN_BLUE);
-    }
+void SetLED(char Red, char Green, char Blue) {
+  if (Red) {
+    SETBIT(PORTB,PIN_RED);
+    } else {
+    CLEARBIT(PORTB,PIN_RED);
   }
+  if (Green) {
+    SETBIT(PORTB,PIN_GREEN);
+    } else {
+    CLEARBIT(PORTB,PIN_GREEN);
+  }
+  if (Blue) {
+    SETBIT(PORTB,PIN_BLUE);
+    } else {
+    CLEARBIT(PORTB,PIN_BLUE);
+  }
+}
+  
+int sendNrfPackage(char *pPackageData)
+{
+    int mCounter = 0;
+    nrf24_send(pPackageData); //Send Packet
+      
+    /* Wait for transmission to end */
+    
+    while(nrf24_isSending() && mCounter < 50) // Wait for the last transmission to end
+    {
+      mCounter++;
+    }
+        //TODO
+          //data_compare[PackageCounter] = nData_compare; //Set new Compare data
+  
+    if (nrf24_lastMessageStatus() == NRF24_TRANSMISSON_OK)
+    {
+      return 0;
+    }
+    else
+    {
+      return 1;
+    }
+}
+    
+
+
   
 // scanning all channels in the 2.4GHz band and search cleanest Channel
 void nRFscanChannels(void) {

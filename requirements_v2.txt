@@ -1,0 +1,2 @@
+- weniger kanaele (max. 64)
+- stabile uebertragung (keine aenderungen der DMX werte wenn nicht von NRF uebertragen)

@@ -80,7 +80,7 @@ int main(void)
   int StatusLED = 0;
   int Counter = 0;
   
-  rx_address[4] = (PIND&0b11110000)>>4; // Get the Adress from DIP's
+  //rx_address[4] = (PIND&0b11110000)>>4; // Get the Adress from DIP's
   
   // Clear the Channel Array
   for (Counter=0; Counter<513; Counter++)
@@ -103,9 +103,10 @@ int main(void)
   while(1)
   {
     // If the Transmitt Adress should be changed, the Device should do a Soft reset
-    if (rx_address[4] != ((PIND&0b11110000)>>4)){
+    /*if (rx_address[4] != ((PIND&0b11110000)>>4)){
       soft_reset();
     }
+    */
      
     if(nrf24_dataReady())       // Wait for NRF to be Ready
     {
@@ -113,9 +114,13 @@ int main(void)
       StatusLED = 1;
 
       nrf24_getData(Package_Data);// Get Data
-      for (Counter = 1; Counter < 32; Counter++) // Convert Data
-      {
-        DMX_Data[Package_Data[0]*31+Counter-1] = Package_Data[Counter];        
+      
+      // Check Is Package if valideeeeeee
+      if (CheckPackage(Package_Data) == Package_Data[31]){
+        for (Counter = 1; Counter < 31; Counter++) // Convert Data
+        {
+          DMX_Data[Package_Data[0]*30+Counter-1] = Package_Data[Counter];
+        }
       }
     }
     else
@@ -131,6 +136,16 @@ int main(void)
     }
     
   }
+}
+
+int CheckPackage(uint8_t * Data){
+  int Summe = 0;
+  
+  for (int Counter = 1; Counter <= 30; Counter++){
+    Summe += Package_Data[Counter] & 0x01;
+  }
+  
+  return Summe;
 }
 
 void SetLED(char Red, char Green, char Blue) {
@@ -162,9 +177,9 @@ char nrf24_search_channel()
   while (1) //Endless until a channel is found
   {
     // If the Transmitt Adress should be changed, the Device should do a Soft reset
-    if (rx_address[4] != ((PIND&0b11110000)>>4)){
-      soft_reset();
-    }
+    //if (rx_address[4] != ((PIND&0b11110000)>>4)){
+    //  soft_reset();
+    //}
     
     // Test only the first 80 Channels
     // Visit: https://en.wikipedia.org/wiki/List_of_WLAN_channels#Interference_concerns
