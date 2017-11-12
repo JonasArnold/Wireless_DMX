@@ -108,7 +108,7 @@ extern void nrf24_sck_digitalWrite(uint8_t state);
 extern void nrf24_mosi_digitalWrite(uint8_t state);
 
 /* -------------------------------------------------------------------------- */
-/* nrf24 MISO pin read function */
+/* nrf24 MISO pin read function
 /* - returns: Non-zero if the pin is high */
 /* -------------------------------------------------------------------------- */
 extern uint8_t nrf24_miso_digitalRead();

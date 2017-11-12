@@ -1,6 +1,6 @@
 /*******************************************************************************
 Firma        : Roche Diagnostics International AG
-               VET department
+VET department
 Autor        : Ivan Heinzer
 
 Projekt      : Wireless_DMX_Transmitter
@@ -15,7 +15,7 @@ CPU-Clock         : 16.0000 MHz
 ********************************************************************************
 Datum                     Vers.    Kommentar / Aenderungsgrund
 23/05/2016 9:32:40 AM     1.0      Creation
-23/04/2016 9:32:40 AM     2.0      Send only new 
+23/04/2016 9:32:40 AM     2.0      Send only new
 13/05/2016 9:32:40 AM     3.0      Automatic Channel choice
 
 *******************************************************************************/
@@ -52,29 +52,38 @@ do                          \
 
 /*------------------------ const and definitions  ----------------------------*/
 #define   RGB_LED   PORTB
+#define   DIP_SWITCH PIND
 #define   PIN_RED   PORTB0
 #define   PIN_GREEN PORTB1
-#define   PIN_BLUE  PORTB2
 
+/* CONFIGURE */
+#define   CHANNELS_TO_SEND 60
+#define   CHANNELS_PER_PACKAGE 30
+#define   NUMBER_OF_PACKAGES_TO_SEND (CHANNELS_TO_SEND/CHANNELS_PER_PACKAGE)
+#define   PAYLOAD_LENGTH 32
 #define   RAWDATASIZE 126
-#define   NUMBER_OF_PACKAGES_TO_SEND 2  // = 64 channels transmission
+
+/* MACROS */
+#define   DIP_ADDRESS (DIP_SWITCH&0b11110000)>>4
 
 /*------------------------ Global Variables  ---------------------------------*/
 uint8_t Package_Data[32];
 char data_compare[18];
 uint8_t tx_address[5] = {0xE7,0xE7,0xE7,0xE7,0x00};
-  
+
 /*----------------------------Functions--------------------------------------*/
-void SetLED(char Red, char Green, char Blue);
+char nRFscanChannels();
+int sendNrfPackage(uint8_t *pPackageData);
+void setLeds(char Red, char Green);
 void wdt_init(void) __attribute__((naked)) __attribute__((section(".init3")));
-  
+
 /*----------------------------- Hauptprogramm --------------------------------*/
 
 int main(void)
 {
   // I/O-Konfigurationen
   //RGB LED
-  DDRB = 0b00000111;
+  DDRB = 0b00000011;  // two outputs for rg leds
   //DIP-Switch
   DDRD = 0b00000000;
   PORTD= 0b11110000;
@@ -82,31 +91,34 @@ int main(void)
   DDRE = 0b01000000;
   
   // Variables
-  int StatusLED = 0;
-  int Counter;
-  int PackageCounter;
-  int nData_compare = 0;
+  int TransmissionFailures = 0;
+  int Channel;
+  int Package;
+  int Checksum = 0;
   char Best_Channel;
+  char New_Best_Channel;
+  int SendSuccess;
   
   //TODO
   // Get the Adress from DIP's
-  //tx_address[4] = (PIND&0b11110000)>>4; 
+  //tx_address[4] = DIP_ADDRESS;
   
   // Clear the Channel Array
-  for (Counter=0; Counter<513; Counter++) 
+  for (Channel=0; Channel<513; Channel++)
   {
-    DMX_Data[Counter]= 0;
+    DMX_Data[Channel]= 0;
   }
   
-  SetLED(1,1,0); // Show Red/Green
+  //Startup
+  setLeds(1,1); // Show Red/Green
   
   // NRF Init
   nrf24_init();
-  nrf24_config(2,32);                 // Channel #2 , payload length: 32
+  nrf24_config(5, PAYLOAD_LENGTH);    // Default Channel
   nrf24_tx_address(tx_address);       // Set the device addresses
   
   Best_Channel = nRFscanChannels();
-  nrf24_config(Best_Channel,32);      // Channel #2 , payload length: 32
+  nrf24_config(Best_Channel, PAYLOAD_LENGTH);
   
   // DMX Init
   CLEARBIT(PORTE,PORTE6);             // Set to recieve
@@ -117,54 +129,79 @@ int main(void)
   {
     //HACK
     // If the Transmitt Adress should be changed, the Device should do a Soft reset
-    //if (tx_address[4] != ((PIND&0b11110000)>>4)){
-      //soft_reset();
+    //if (tx_address[4] != DIP_ADDRESS){
+    //soft_reset();
     //}
     
-    // every package (contains 30 channels)
-    for (PackageCounter = 0; PackageCounter < NUMBER_OF_PACKAGES_TO_SEND; PackageCounter++)
+    // every package (contains CHANNELS_PER_PACKAGE channels)
+    for (Package = 0; Package < NUMBER_OF_PACKAGES_TO_SEND; Package++)
     {
       
-      Package_Data[0] = PackageCounter;   //Write Packet-Nr
-      nData_compare = 0;                //Reset data compare
-          
-      // every channel of the package    
-      for (Counter = 1; Counter < 31; Counter++) //Write packet-Data
-      {  
+      Package_Data[0] = Package;    // Package Number is first byte
+      Checksum = 0;            // Reset data compare
+      
+      // every channel of the package
+      for (Channel = 1; Channel <= CHANNELS_PER_PACKAGE; Channel++)
+      {
         /* check, if channel < 512 (protect array DMX Data out of bounds) */
-        if ((PackageCounter*30+Counter) < 512)
+        if (((Package*CHANNELS_PER_PACKAGE)+Channel) < 512)
         {
-          Package_Data[Counter] = DMX_Data[PackageCounter*30+Counter-1];
-          nData_compare += 0x01 & Package_Data[Counter];
+          // Write dmx channel data to package for transmission
+          Package_Data[Channel] = DMX_Data[(Package*CHANNELS_PER_PACKAGE)+Channel-1];  //-1 because DMX_DATA starts at 0
+          // calculate checksum
+          Checksum += CHECKBIT(Package_Data[Channel],0);  //LSB of every channel => checksum
+        }
+        else  // if value is out of DMX Data range write zero (prevent wrong dmx data)
+        {
+          Package_Data[Channel] = 0;
         }
       }
       
-      Package_Data[31] = nData_compare;
+      Package_Data[CHANNELS_PER_PACKAGE+1] = Checksum;  // last byte of package is checksum
       
+      // Send Package with NRF24
+      SendSuccess = sendNrfPackage(Package_Data);
+      if(SendSuccess == 1)   //SUCCESS
+      {
+        TransmissionFailures = 0;
+        setLeds(0,1);  //green
+      }
+      //No Success => try to send next Package and increment Failure Counter
+      else if (SendSuccess == 0)
+      {
+        //setLeds(1,1);   // red and green
+        TransmissionFailures++ ;
+      }
+      // No Success for last 25 tries
       
-      if(sendNrfPackage(Package_Data) == 0)
+      if(TransmissionFailures > 100 && TransmissionFailures < 1000)
       {
-        StatusLED = 0;
-        SetLED(0,1,0);
+        setLeds(1,1);
       }
-      else if (StatusLED < 25)      // if more than 25 bad status were recognized
+      else if (TransmissionFailures > 1000)
       {
-        SetLED(1,1,0);
-        StatusLED++ ;
+        // No Transmission possible
+        setLeds(1,0);  // red
+        
+        //Searching new channel
+        New_Best_Channel = nRFscanChannels();
+        //if better channel found => Change channel and reset transmission failure counter
+        if(New_Best_Channel != Best_Channel)
+        {
+          nrf24_config(New_Best_Channel,32);
+          TransmissionFailures = 0;
+        }
+        
       }
-      else
-      {
-         SetLED(1,0,0);
-      }
-      //Send only If Data has been changed. (Receiver will listen to these Packages 
+      //Send only If Data has been changed. (Receiver will listen to these Packages
       //                                     Package 0 and 8 will be sent every time.)
       //if (data_compare[PackageCounter] != nData_compare  || PackageCounter == 0 || PackageCounter == 8  )
-      }
+    }
   }
 }
 
 
-void SetLED(char Red, char Green, char Blue) {
+void setLeds(char Red, char Green) {
   if (Red) {
     SETBIT(PORTB,PIN_RED);
     } else {
@@ -175,45 +212,37 @@ void SetLED(char Red, char Green, char Blue) {
     } else {
     CLEARBIT(PORTB,PIN_GREEN);
   }
-  if (Blue) {
-    SETBIT(PORTB,PIN_BLUE);
-    } else {
-    CLEARBIT(PORTB,PIN_BLUE);
+}
+
+int sendNrfPackage(uint8_t *pPackageData)
+{
+  //int mCounter = 0;
+  nrf24_send(pPackageData); //Send Packet
+  
+  /* Wait for transmission to end */
+  
+  while(nrf24_isSending()) // Wait for the last transmission to end
+  {}
+  
+  if (nrf24_lastMessageStatus() == NRF24_TRANSMISSON_OK)
+  {
+    return 1;
+  }
+  else
+  {
+    return 0;
   }
 }
-  
-int sendNrfPackage(char *pPackageData)
-{
-    int mCounter = 0;
-    nrf24_send(pPackageData); //Send Packet
-      
-    /* Wait for transmission to end */
-    
-    while(nrf24_isSending() && mCounter < 50) // Wait for the last transmission to end
-    {
-      mCounter++;
-    }
-        //TODO
-          //data_compare[PackageCounter] = nData_compare; //Set new Compare data
-  
-    if (nrf24_lastMessageStatus() == NRF24_TRANSMISSON_OK)
-    {
-      return 0;
-    }
-    else
-    {
-      return 1;
-    }
-}
-    
 
 
-  
+
+
 // scanning all channels in the 2.4GHz band and search cleanest Channel
-void nRFscanChannels(void) {
-  unsigned char numberOfChannels = 80; //there are 126, 0 to 125
+char nRFscanChannels()
+{
+  unsigned char numberOfChannels = 20; //there are 126, 0 to 125
   unsigned int i,j;
-  char CD_value;
+  uint8_t CD_value;
   char RAWDATA[RAWDATASIZE];
   int CCHANNEL[8+1];
   char BestChannel;
@@ -248,7 +277,8 @@ void nRFscanChannels(void) {
 
       // received power > -64dBm
       nrf24_readRegister(CD,&CD_value,1);
-      if (CD_value){
+      if (CD_value)
+      {
         RAWDATA[i + 1]++;
       }
 
@@ -259,7 +289,7 @@ void nRFscanChannels(void) {
     }
   }
   
-  // Do average of 10 Channels 
+  // Do average of 10 Channels
   for (j = 1; j < 80; j++)
   {
     i = j / 10;

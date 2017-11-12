@@ -40,7 +40,7 @@ void nrf24_config(uint8_t channel, uint8_t pay_length)
     nrf24_configRegister(RX_PW_P4, 0x00); // Pipe not used 
     nrf24_configRegister(RX_PW_P5, 0x00); // Pipe not used 
 
-    // Mbps 1, TX gain: 0dbm
+    // 1 Mbps, TX gain: 0dbm
     nrf24_configRegister(RF_SETUP, (0<<RF_DR)|((0x03)<<RF_PWR));
 
     // CRC enable, 1 byte CRC length
@@ -53,7 +53,7 @@ void nrf24_config(uint8_t channel, uint8_t pay_length)
     nrf24_configRegister(EN_RXADDR,(1<<ERX_P0)|(1<<ERX_P1)|(0<<ERX_P2)|(0<<ERX_P3)|(0<<ERX_P4)|(0<<ERX_P5));
 
     // Auto retransmit delay: 1000 us and Up to 15 retransmit trials
-    nrf24_configRegister(SETUP_RETR,(0x00<<ARD)|(0x0F<<ARC));
+    nrf24_configRegister(SETUP_RETR,(0<<ARD)|(0x0F<<ARC));
 
     // Dynamic length configurations: No dynamic length
     nrf24_configRegister(DYNPD,(0<<DPL_P0)|(0<<DPL_P1)|(0<<DPL_P2)|(0<<DPL_P3)|(0<<DPL_P4)|(0<<DPL_P5));

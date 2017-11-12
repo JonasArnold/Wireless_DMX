@@ -1,6 +1,6 @@
 /*******************************************************************************
 Firma        : Roche Diagnostics International AG
-               VET Department
+VET Department
 Autor        : Ivan Heinzer
 
 Projekt      : Wireless_DMX_Receiver
@@ -50,17 +50,26 @@ do                          \
 
 /*------------------------ const and definitions  ----------------------------*/
 #define   RGB_LED   PORTB
+#define   DIP_SWITCH PIND
 #define   PIN_RED   PORTB0
 #define   PIN_GREEN PORTB1
-#define   PIN_BLUE  PORTB2
 
+/* CONFIGURE */
+#define   CHANNELS_TO_SEND 60
+#define   CHANNELS_PER_PACKAGE 30
+#define   NUMBER_OF_PACKAGES_TO_SEND (CHANNELS_TO_SEND/CHANNELS_PER_PACKAGE)
+#define   PAYLOAD_LENGTH 32
+
+/* MACROS */
+#define   DIP_ADDRESS (DIP_SWITCH&0b11110000)>>4
 /*------------------------ Global Variables  ---------------------------------*/
 uint8_t Package_Data[32];
 uint8_t rx_address[5] = {0xE7,0xE7,0xE7,0xE7,0x00};
 
 /*----------------------------Functions--------------------------------------*/
-void SetLED(char Red, char Green, char Blue);
+void setLeds(char Red, char Green);
 char nrf24_search_channel();
+int getChecksum(uint8_t * Data);
 void wdt_init(void) __attribute__((naked)) __attribute__((section(".init3")));
 
 /*----------------------------- Mainprogram --------------------------------*/
@@ -69,31 +78,34 @@ int main(void)
 {
   // I/O-Configurations
   //  RGB LED
-  DDRB = 0b00000111;
+  DDRB = 0b00000011;  // two outputs for rg leds
   //  DIP-Switch
   DDRD = 0b00000000;
   PORTD= 0b11110000;
   //  MAX485
   DDRE = 0b01000000;
   
-  // Variables 
-  int StatusLED = 0;
-  int Counter = 0;
+  // Variables
+  int ReceiveFailures = 0;
+  int Channel = 0;
+  uint8_t DataReady = 0;
+  uint8_t PackageNumber = 0;
   
-  //rx_address[4] = (PIND&0b11110000)>>4; // Get the Adress from DIP's
+  //rx_address[4] = DIP_ADDRESS; // Get the Adress from DIP's
   
   // Clear the Channel Array
-  for (Counter=0; Counter<513; Counter++)
+  for (Channel=0; Channel<513; Channel++)
   {
-    DMX_Data[Counter]= 0;
+    DMX_Data[Channel]= 0;
   }
   
-  SetLED(1,1,0);
+  setLeds(1,1);  // red green
 
   // NRF Init
   nrf24_init();
   nrf24_rx_address(rx_address); // Set the device addresses
-  nrf24_search_channel();       // Search Transmit Channel/Frequency
+  nrf24_config(5,PAYLOAD_LENGTH);  // Default Channel
+  //nrf24_search_channel();       // Search Transmit Channel/Frequency
   
   // DMX Init
   SETBIT(PORTE,PORTE6);         // Set SN75176b to transmit
@@ -103,52 +115,70 @@ int main(void)
   while(1)
   {
     // If the Transmitt Adress should be changed, the Device should do a Soft reset
-    /*if (rx_address[4] != ((PIND&0b11110000)>>4)){
-      soft_reset();
+    /*if (rx_address[4] != DIP_ADDRESS){
+    soft_reset();
     }
     */
-     
-    if(nrf24_dataReady())       // Wait for NRF to be Ready
+    
+    /* Wait for Data from NRF */
+    DataReady = nrf24_dataReady();
+    if(DataReady == 1)
     {
-      SetLED(0,1,0);            // Green ON
-      StatusLED = 1;
+      setLeds(0,1);          // green
+      ReceiveFailures = 0;   // reset failure counter
 
-      nrf24_getData(Package_Data);// Get Data
+      // Get the Data from the NRF
+      nrf24_getData(Package_Data);
       
-      // Check Is Package if valideeeeeee
-      if (CheckPackage(Package_Data) == Package_Data[31]){
-        for (Counter = 1; Counter < 31; Counter++) // Convert Data
+      // Check if the calculated Checksum equals the transmitted Checksum
+      if (getChecksum(Package_Data) == Package_Data[CHANNELS_PER_PACKAGE+1])
+      {
+        PackageNumber = Package_Data[0];  // extract the number of the package
+        /* Copy the received Data in the DMX Data Array
+        (starting at 1 because 0 is the package number) */
+        for (Channel = 1; Channel <= CHANNELS_PER_PACKAGE; Channel++)
         {
-          DMX_Data[Package_Data[0]*30+Counter-1] = Package_Data[Counter];
+          // -1 because the DMX Data Array starts at 0
+          DMX_Data[(PackageNumber*CHANNELS_PER_PACKAGE) + Channel-1] = Package_Data[Channel];
         }
       }
     }
+    /* No Data ready from the NRF */
     else
     {
-      // NRF is NOT Ready
-      SetLED(1,1,0);          // Red ON Green ON
-      StatusLED++ ;            
+      DataReady = 0;
+      //setLeds(1,1);         // red and green
+      ReceiveFailures++ ;   // increase failure counter
     }
-    if (StatusLED > 500)      // if more than 500 bad status were recognized
+    
+    /* If there was no Data received for a long time */
+    if (ReceiveFailures > 50 && ReceiveFailures < 1000)
     {
-      SetLED(1,0,0);          // Red ON
-      nrf24_search_channel(); // After Connection Timeout search for another Channel
+      setLeds(1,1);           // red and green
+    }
+    else if(ReceiveFailures > 1000)
+    {
+      setLeds(1,0);
+      nrf24_search_channel(); // search channels for data (endless until data is found)
     }
     
   }
 }
 
-int CheckPackage(uint8_t * Data){
-  int Summe = 0;
+int getChecksum(uint8_t * Data)
+{
+  int Checksum = 0;
   
-  for (int Counter = 1; Counter <= 30; Counter++){
-    Summe += Package_Data[Counter] & 0x01;
+  // starting at 1 because first index (0) is the number of the package
+  for (int Counter = 1; Counter <= CHANNELS_PER_PACKAGE; Counter++)
+  {
+    Checksum += CHECKBIT(Package_Data[Counter],0);
   }
   
-  return Summe;
+  return Checksum;
 }
 
-void SetLED(char Red, char Green, char Blue) {
+void setLeds(char Red, char Green) {
   if (Red) {
     SETBIT(PORTB,PIN_RED);
     } else {
@@ -159,52 +189,52 @@ void SetLED(char Red, char Green, char Blue) {
     } else {
     CLEARBIT(PORTB,PIN_GREEN);
   }
-  if (Blue) {
-    SETBIT(PORTB,PIN_BLUE);
-    } else {
-    CLEARBIT(PORTB,PIN_BLUE);
-  }
 }
 
 
-// scan for a transmiter device 
+// scan for a transmiter device
 char nrf24_search_channel()
 {
   // Variables
-  char Channel = 0;
+  char WirelessChannel = 0;
   char NrOfTry;
 
   while (1) //Endless until a channel is found
   {
     // If the Transmitt Adress should be changed, the Device should do a Soft reset
-    //if (rx_address[4] != ((PIND&0b11110000)>>4)){
+    //if (rx_address[4] != DIP_ADDRESS){
     //  soft_reset();
     //}
     
     // Test only the first 80 Channels
     // Visit: https://en.wikipedia.org/wiki/List_of_WLAN_channels#Interference_concerns
-    if (Channel > 80){
-      Channel = 1;
-    } else {
-      Channel++;
+    if (WirelessChannel > 20)
+    {
+      WirelessChannel = 1;
     }
+    else { WirelessChannel++; }
     
     // Set new Channel
     nrf24_powerDown();
-    nrf24_config(Channel,32);                     // Try new Channel, payload length: 32
+    _delay_ms(10);
+    nrf24_config(WirelessChannel,PAYLOAD_LENGTH);
+    _delay_ms(10);
     nrf24_powerUpRx();
+    
+    _delay_ms(100);
 
-    for (NrOfTry = 0; NrOfTry < 25; NrOfTry++)    // Refresh it 25 Times per Channel
+    for (NrOfTry = 0; NrOfTry < 25; NrOfTry++)    // Check for data 25 times per Channel
     {
-      if (nrf24_dataReady())                      // Check if the NRF is Ready
+      if (nrf24_dataReady())   // check for data
       {
-        nrf24_getData(Package_Data);                // Get Data
-        if ((Package_Data[0] > 0) && (Package_Data[0] < 30)) // Check if the Package is corrupt
+        nrf24_getData(Package_Data);  // get the data
+        // Check the Package (first byte must be between 0 and NUMBER_OF_PACKAGES_TO_SEND)
+        if ((Package_Data[0] >= 0) && (Package_Data[0] < NUMBER_OF_PACKAGES_TO_SEND))
         {
-          return;                                 // New Channel is found and Setup
+          return 0;  // New Channel is found and Setup
         }
       }
-      _delay_us(10);
+      _delay_us(1000);   // delay a bit (25*10us = 0,25ms per channel)
     }
   }
 }
